@@ -11,7 +11,7 @@
     --yellow: #f2d94a;
     --blue: #3d5280;
     --green: #4a8044;
-    --red: #a62e2e;
+    --red: #d32f2f;
     --ext-yellow: #f2d94a;
     --purple: #33006b;
     --outline: #111;
@@ -19,8 +19,7 @@
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { height: 100%; margin: 0; }
   body {
-    background:
-      radial-gradient(ellipse at 50% 40%, #12302c 0%, #0b1b1a 50%, #050a0a 100%);
+    background: #000;
     color: #fff;
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     display: flex;
@@ -73,6 +72,7 @@
   .display-wrap {
     flex: 1 1 auto;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     min-height: 0;
@@ -94,8 +94,7 @@
     font-weight: 500;
     font-size: min(70vw, 40vh, 380px);
     line-height: 1;
-    color: var(--yellow);
-    text-shadow: 0 4px 14px rgba(0,0,0,.5);
+    color: #fff;
     font-variant-numeric: tabular-nums;
     transition: color .2s;
   }
@@ -113,9 +112,7 @@
     font-family: Impact, Haettenschweiler, "Arial Narrow Bold", "Roboto Condensed", sans-serif;
     font-size: 2.6rem;
     line-height: 1;
-    color: var(--yellow);
-    -webkit-text-stroke: 0.05em var(--outline);
-    paint-order: stroke fill;
+    color: #fff;
     font-variant-numeric: tabular-nums;
     margin-bottom: 10px;
   }
@@ -153,20 +150,34 @@
   button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
   button.wide { grid-column: 1 / -1; }
 
-  #reset      { background: var(--blue); }
-  #startPause { background: var(--green); }
-  #startPause.running { background: #c98a12; }
+  /* The big clock can overflow its area; make sure it never blocks taps on the buttons */
+  .topbar, .grid { position: relative; z-index: 2; }
+  .display-wrap, .watermark, .display { pointer-events: none; }
+
+  /* Before a frame is in play, show the Frames logo instead of the clock */
+  body.splash .display { visibility: hidden; }
+  body.splash .mini { visibility: hidden; }
+  body.splash .watermark { opacity: 1; inset: 12% 2%; }
+  body.flipped.splash .watermark { transform: rotate(180deg); }
+  #startPause { height: clamp(72px, 12vh, 108px); font-size: clamp(1.6rem, 7.5vw, 2.4rem); }
+
+
+  #reset      { background: #2f68d6; }
+  #startPause { background: #1e9e55; }
+  #startPause.running { background: #ee7a14; }
   #redExt     { background: var(--red); }
   #yellowExt  { background: var(--ext-yellow); color: #111; }
-  #resetFrame { background: var(--purple); }
+  #resetFrame { background: #6c2bd9; }
 
-  button:disabled {
-    background: #5b6669 !important;
-    color: #aab3b6 !important;
-    border-color: #98a3a7;
+  button:disabled, button.used {
+    background: #2a2a2a !important;
+    color: #777 !important;
+    border-color: #555;
     cursor: not-allowed;
     box-shadow: none;
   }
+  /* A used extension stays tappable so it can be undone */
+  button.used:not(:disabled) { cursor: pointer; }
 </style>
 </head>
 <body>
@@ -189,11 +200,11 @@
     <div id="status" class="status">Ready</div>
 
     <div class="grid">
-      <button id="reset">Reset</button>
-      <button id="startPause">Start</button>
+      <button id="startPause" class="wide">Start</button>
       <button id="redExt">Red Ext.</button>
       <button id="yellowExt">Yellow Ext.</button>
-      <button id="resetFrame" class="wide">Reset Frame</button>
+      <button id="reset">Reset</button>
+      <button id="resetFrame">Reset Frame</button>
     </div>
   </main>
 
@@ -224,6 +235,8 @@
   let intervalId = null;
   let running = false;
   let started = false;
+  let frameActive = false;
+  const undoTimer = { red: null, yellow: null };
   let redUsed = false;
   let yellowUsed = false;
   let beeped = {};
@@ -245,6 +258,7 @@
   }
 
   function render() {
+    document.body.classList.toggle('splash', !frameActive);
     const secs = Math.ceil(remainingMs / 1000);
     display.textContent = secs;
     mini.textContent = secs;
@@ -260,9 +274,13 @@
     startPause.disabled = remainingMs <= 0;
     resetBtn.textContent = running ? 'New Shot' : 'Reset';
 
-    const canExt = remainingMs > 0;
-    redExt.disabled = redUsed || !canExt;
-    yellowExt.disabled = yellowUsed || !canExt;
+    const canExt = remainingMs > 0 && frameActive;
+    redExt.disabled = redUsed ? remainingMs <= 0 : !canExt;
+    redExt.classList.toggle('used', redUsed);
+    redExt.textContent = undoTimer.red ? 'Undo?' : 'Red Ext.';
+    yellowExt.disabled = yellowUsed ? remainingMs <= 0 : !canExt;
+    yellowExt.classList.toggle('used', yellowUsed);
+    yellowExt.textContent = undoTimer.yellow ? 'Undo?' : 'Yellow Ext.';
   }
 
   function tick() {
@@ -283,8 +301,24 @@
     render();
   }
 
+  // Keep the screen awake once a shot has been started (where the browser supports it)
+  let wakeLock = null;
+  async function lockScreen() {
+    try {
+      if ('wakeLock' in navigator && !wakeLock) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', function () { wakeLock = null; });
+      }
+    } catch (e) { wakeLock = null; }
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && started) lockScreen();
+  });
+
   function begin() {
     if (remainingMs <= 0) return;
+    lockScreen();
+    frameActive = true;
     running = true;
     started = true;
     endTime = Date.now() + remainingMs;
@@ -342,9 +376,39 @@
     render();
   }
 
+  // Tapping a used extension asks "Undo?"; a second tap within 3 seconds takes the 15 seconds back
+  function undoExt(which) {
+    if (which === 'red') redUsed = false; else yellowUsed = false;
+    if (running) {
+      const left = Math.max(1000, (endTime - Date.now()) - EXT_SECONDS * 1000);
+      endTime = Date.now() + left;
+      remainingMs = left;
+    } else {
+      remainingMs = Math.max(1000, remainingMs - EXT_SECONDS * 1000);
+    }
+    beeped = {};
+    statusEl.textContent = (which === 'red' ? 'Red' : 'Yellow') + ' extension undone';
+    render();
+  }
+
+  function handleExt(which) {
+    const used = which === 'red' ? redUsed : yellowUsed;
+    if (!used) { useExt(which); return; }
+    if (undoTimer[which]) {
+      clearTimeout(undoTimer[which]);
+      undoTimer[which] = null;
+      undoExt(which);
+    } else {
+      undoTimer[which] = setTimeout(function () { undoTimer[which] = null; render(); }, 3000);
+      render();
+    }
+  }
+
   function resetEverything() {
+    ['red', 'yellow'].forEach(function (k) { clearTimeout(undoTimer[k]); undoTimer[k] = null; });
     redUsed = false;
     yellowUsed = false;
+    frameActive = false;
     resetShot();
     statusEl.textContent = 'New frame - extensions available';
     render();
@@ -352,9 +416,24 @@
 
   startPause.addEventListener('click', () => (running ? pause() : begin()));
   resetBtn.addEventListener('click', () => (running ? newShot() : resetShot()));
-  redExt.addEventListener('click', () => useExt('red'));
-  yellowExt.addEventListener('click', () => useExt('yellow'));
-  resetFrame.addEventListener('click', resetEverything);
+  redExt.addEventListener('click', () => handleExt('red'));
+  yellowExt.addEventListener('click', () => handleExt('yellow'));
+  // Reset Frame needs a second tap to confirm
+  let confirmTimer = null;
+  resetFrame.addEventListener('click', function () {
+    if (confirmTimer) {
+      clearTimeout(confirmTimer);
+      confirmTimer = null;
+      resetFrame.textContent = 'Reset Frame';
+      resetEverything();
+    } else {
+      resetFrame.textContent = 'Confirm?';
+      confirmTimer = setTimeout(function () {
+        confirmTimer = null;
+        resetFrame.textContent = 'Reset Frame';
+      }, 3000);
+    }
+  });
 
   // Orientation toggle (remembered where the browser allows it)
   function setFlipped(on) {
