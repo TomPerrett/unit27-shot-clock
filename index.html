@@ -258,6 +258,7 @@
     startPause.textContent = running ? 'Pause' : (started && remainingMs > 0 ? 'Resume' : 'Start');
     startPause.classList.toggle('running', running);
     startPause.disabled = remainingMs <= 0;
+    resetBtn.textContent = running ? 'New Shot' : 'Reset';
 
     const canExt = remainingMs > 0;
     redExt.disabled = redUsed || !canExt;
@@ -268,6 +269,12 @@
     remainingMs = Math.max(0, endTime - Date.now());
     const secs = Math.ceil(remainingMs / 1000);
     if (secs <= 5 && secs > 0 && !beeped[secs]) { beeped[secs] = true; beep(880, 0.08); }
+    if (secs === 10 && !beeped[10]) {
+      beeped[10] = true;
+      try { if (navigator.vibrate) navigator.vibrate([300, 120, 300]); } catch (e) {}
+      beep(660, 0.15);
+      setTimeout(function () { beep(660, 0.15); }, 250);
+    }
     if (remainingMs <= 0) {
       stop();
       statusEl.textContent = 'Time up!';
@@ -309,6 +316,15 @@
     render();
   }
 
+  // While running, the left button restarts the clock at 45 for the next shot and keeps it running
+  function newShot() {
+    remainingMs = SHOT_SECONDS * 1000;
+    endTime = Date.now() + remainingMs;
+    beeped = {};
+    statusEl.textContent = 'New shot';
+    render();
+  }
+
   function useExt(which) {
     if (remainingMs <= 0) return;
     if (which === 'red' && redUsed) return;
@@ -335,7 +351,7 @@
   }
 
   startPause.addEventListener('click', () => (running ? pause() : begin()));
-  resetBtn.addEventListener('click', resetShot);
+  resetBtn.addEventListener('click', () => (running ? newShot() : resetShot()));
   redExt.addEventListener('click', () => useExt('red'));
   yellowExt.addEventListener('click', () => useExt('yellow'));
   resetFrame.addEventListener('click', resetEverything);
